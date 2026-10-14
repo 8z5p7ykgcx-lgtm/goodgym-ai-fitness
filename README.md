@@ -42,10 +42,10 @@ npm run preview    # 本地预览构建产物
 | 形态 | wasm 推理引擎 | 姿态模型 |
 |---|---|---|
 | 打包副本 / 安卓 App（推荐） | `public/wasm/` 本地加载 | `public/models/pose_landmarker_full.task` 本地加载，完全离线 |
-| GitHub 网页版 | 自动回退 jsdelivr CDN | 回退官方 Google CDN（GPU 失败自动降级 CPU） |
-| 兜底 | — | 官方 Google CDN |
+| GitHub Pages 网页版 | 本地加载（构建时自动生成） | 本地加载（构建时自动下载模型并生成 base64 副本） |
+| 兜底 | jsdelivr CDN | 官方 Google CDN（GPU 失败自动降级 CPU） |
 
-> 提示：模型体积约 9.4MB。国内直接访问 Google CDN 可能不稳定，建议国内用户使用打包副本或安卓 App（模型已内置，完全离线）。
+> 提示：模型体积约 9.4MB。本地资源统一使用 XHR 读取（兼容安卓 App 的 file:// 环境，`fetch` 不支持 file:// scheme）。构建部署时模型会一并打包，网页版与 App 均无需访问 Google 存储。
 
 ## 摄像头授权说明
 
@@ -56,7 +56,16 @@ npm run preview    # 本地预览构建产物
 
 ## 部署
 
-可部署到 GitHub Pages、Vercel、Netlify 等静态托管平台（已配置相对路径构建，子路径部署不会白屏）。
+### GitHub Pages（推荐，自动构建）
+
+仓库已内置 `.github/workflows/deploy-pages.yml`：推送到 `main` 分支后，GitHub Actions 会自动安装依赖、下载 AI 模型、构建并部署到 Pages。
+
+启用步骤（一次性）：
+1. 进入仓库 **Settings → Pages**
+2. 「Build and deployment」来源选择 **GitHub Actions**
+3. 推送代码后，Actions 自动构建部署，页面地址为 `https://<用户名>.github.io/goodgym-ai-fitness/`
+
+也可以部署到 Vercel、Netlify 等任意静态托管平台（已配置相对路径构建，子路径部署不会白屏）。
 
 ## 安卓 App
 

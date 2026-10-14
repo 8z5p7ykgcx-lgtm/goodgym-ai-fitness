@@ -1,6 +1,9 @@
 // MediaPipe Pose Landmarker 加载与推理封装
-// 加载链：本地二进制模型 → 仓库内置 base64 模型（运行时解码）→ 官方 CDN（GPU）→ 官方 CDN（CPU）
-// wasm：本地优先，失败回退 jsdelivr CDN。保证离线包 / 国内网络 / 网页版均可工作。
+// 加载链：
+//   wasm : 本地（file:// 或 http(s)）→ jsdelivr CDN
+//   模型 : 本地二进制 → 本地 base64（运行时解码）→ 官方 CDN
+// 关键兼容点：本地资源统一用 XHR 读取 —— window.fetch 规范上不支持 file:// scheme，
+// 在安卓 WebView（file:///android_asset）里必然失败，XHR + WebView file 访问 flags 才能读到本地模型。
 import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision';
 import type { Keypoint } from './pose-utils';
 
@@ -18,6 +21,33 @@ let loadPromise: Promise<any> | null = null;
 interface ModelSource {
   path?: string;
   buffer?: Uint8Array;
+}
+
+/** 提取错误简述，用于拼接可读的错误信息 */
+function errBrief(err: unknown): string {
+  if (err instanceof Error && err.message) {
+    const m = err.message.replace(/\s+/g, ' ').trim();
+    return m.length > 60 ? `${m.slice(0, 60)}…` : m;
+  }
+  return String(err);
+}
+
+/** XHR 读取本地/远端资源：兼容 file://（WebView）与 http(s)（网页部署） */
+function readResource(url: string, type: 'arraybuffer' | 'text'): Promise<ArrayBuffer | string> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.responseType = type === 'arraybuffer' ? 'arraybuffer' : 'text';
+    xhr.onload = () => {
+      // file:// 协议下 status 恒为 0，但 response 已就绪
+      const ok = (xhr.status >= 200 && xhr.status < 300) || (xhr.status === 0 && xhr.response != null);
+      if (ok) resolve(xhr.response as ArrayBuffer | string);
+      else reject(new Error(`HTTP ${xhr.status}`));
+    };
+    xhr.onerror = () => reject(new Error('网络请求失败'));
+    xhr.onabort = () => reject(new Error('请求被中止'));
+    xhr.send();
+  });
 }
 
 async function createLandmarker(fileset: any, model: ModelSource, delegate: 'GPU' | 'CPU') {
@@ -48,11 +78,9 @@ async function tryCreateLandmarker(fileset: any, model: ModelSource): Promise<an
   throw lastErr;
 }
 
-/** 拉取仓库内的 base64 模型文本并解码为二进制 */
+/** 读取 base64 模型文本并解码为二进制 */
 async function fetchModelFromB64(url: string): Promise<Uint8Array> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`base64 模型拉取失败: ${res.status}`);
-  const text = await res.text();
+  const text = (await readResource(url, 'text')) as string;
   const bin = atob(text.replace(/\s+/g, ''));
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -63,29 +91,48 @@ export function loadPoseLandmarker(): Promise<any> {
   if (poseLandmarker) return Promise.resolve(poseLandmarker);
   if (loadPromise) return loadPromise;
   loadPromise = (async () => {
+    const stageErrors: string[] = [];
+
     // 1) wasm：本地优先，CDN 兜底
     let fileset: any;
     try {
       fileset = await FilesetResolver.forVisionTasks(WASM_LOCAL);
     } catch (e) {
       console.warn('[MediaPipe] 本地 wasm 加载失败，回退 CDN:', e);
-      fileset = await FilesetResolver.forVisionTasks(WASM_CDN);
-    }
-
-    // 2) 模型：本地二进制 → 仓库 base64 → 官方 CDN；每级均含 GPU/CPU 降级
-    try {
-      poseLandmarker = await tryCreateLandmarker(fileset, { path: MODEL_LOCAL });
-    } catch (e1) {
-      console.warn('[MediaPipe] 本地模型不可用，尝试内置 base64 模型:', e1);
       try {
-        const buffer = await fetchModelFromB64(MODEL_B64);
-        poseLandmarker = await tryCreateLandmarker(fileset, { buffer });
+        fileset = await FilesetResolver.forVisionTasks(WASM_CDN);
       } catch (e2) {
-        console.warn('[MediaPipe] base64 模型不可用，回退官方 CDN:', e2);
-        poseLandmarker = await tryCreateLandmarker(fileset, { path: MODEL_CDN });
+        throw new Error('推理引擎（wasm）加载失败：本地与 CDN 均不可用');
       }
     }
-    return poseLandmarker;
+
+    // 2) 模型：本地二进制 → 本地 base64 → 官方 CDN；每级含 GPU/CPU 降级
+    try {
+      poseLandmarker = await tryCreateLandmarker(fileset, {
+        path: MODEL_LOCAL,
+      });
+      return poseLandmarker;
+    } catch (e1) {
+      console.warn('[MediaPipe] 本地模型二进制不可用:', e1);
+      stageErrors.push(`内置模型文件不可用（${errBrief(e1)}）`);
+    }
+    try {
+      const buffer = await fetchModelFromB64(MODEL_B64);
+      poseLandmarker = await tryCreateLandmarker(fileset, { buffer });
+      return poseLandmarker;
+    } catch (e2) {
+      console.warn('[MediaPipe] 本地 base64 模型不可用:', e2);
+      stageErrors.push(`内置 base64 模型不可用（${errBrief(e2)}）`);
+    }
+    try {
+      poseLandmarker = await tryCreateLandmarker(fileset, { path: MODEL_CDN });
+      return poseLandmarker;
+    } catch (e3) {
+      stageErrors.push(`官方模型服务不可用（${errBrief(e3)}）`);
+    }
+    throw new Error(
+      `姿态模型加载失败：${stageErrors.join('；')}。若为网页版且网络正常，请改用打包版或安卓 App（模型已内置）；安卓 App 内请确认安装包完整。`
+    );
   })();
   return loadPromise;
 }
