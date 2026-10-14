@@ -35,12 +35,14 @@ jobs:
 
       - name: Download pose model
         run: |
-          mkdir -p public/models
+          mkdir -p public/models src/assets
           curl -sL -o public/models/pose_landmarker_full.task \
             "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task"
           ls -la public/models/
-          # 同时生成 base64 副本（网页运行时可免网络解码加载）
+          # 生成 base64 副本（网页/内联均可免网络解码加载）
           base64 -w 0 public/models/pose_landmarker_full.task > public/models/pose_landmarker_full.task.b64
+          # 同时放入 src/assets 供构建时内联进 JS（安卓/网页零文件读取加载）
+          cp public/models/pose_landmarker_full.task.b64 src/assets/model-b64.txt
 
       - name: Build
         run: npm run build

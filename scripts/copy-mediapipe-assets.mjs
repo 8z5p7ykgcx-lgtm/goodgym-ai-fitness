@@ -1,5 +1,5 @@
 // 将 @mediapipe/tasks-vision 的 wasm 资源同步到 public/wasm（供本地优先加载 / 离线使用）
-import { copyFileSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
+import { copyFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -33,3 +33,15 @@ for (const file of needed) {
   }
 }
 console.log(`[copy:mediapipe] 已同步 ${copied}/${needed.length} 个 wasm 文件到 public/wasm`);
+
+// 若仓库内已有 base64 模型，同步一份到 src/assets/model-b64.txt 供构建时内联进 JS
+const b64Src = join(root, 'public', 'models', 'pose_landmarker_full.task.b64');
+const b64DestDir = join(root, 'src', 'assets');
+const b64Dest = join(b64DestDir, 'model-b64.txt');
+if (existsSync(b64Src)) {
+  mkdirSync(b64DestDir, { recursive: true });
+  copyFileSync(b64Src, b64Dest);
+  console.log('[copy:mediapipe] 已同步 base64 模型到 src/assets/model-b64.txt（构建时内联）');
+} else {
+  console.warn('[copy:mediapipe] 未找到 base64 模型，跳过内联复制（GitHub 克隆请由 Actions 生成，或使用打包副本）');
+}

@@ -11,7 +11,7 @@
 - **骨骼可视化**：在视频上叠加绘制骨骼连线、关节角度和错误警告标记
 - **训练统计**：记录训练次数、组数、时长和动作标准率，历史记录保存在本地
 - **离线可用**：模型与推理引擎（wasm）随应用打包，支持本地优先加载，无网环境也能运行
-- **加载兜底**：模型加载支持「本地 → 仓库内置 base64 → 官方 CDN」多级回退，GPU 不可用时自动降级 CPU；wasm 本地优先、回退 jsdelivr CDN
+- **加载兜底**：姿态模型以 base64 形式**内联进应用构建产物**（零文件读取、零网络，安卓 WebView 的 file:// 环境下 100% 可靠），并保留「本地二进制 → 本地 base64 文件 → 官方 CDN」多级回退；wasm 本地优先、回退 jsdelivr CDN；GPU 不可用时自动降级 CPU
 - **防白屏**：启动加载页 + 全局错误边界 + 致命错误兜底页，异常时始终有可见反馈
 - **隐私保护**：所有检测在设备本地完成，视频画面不会上传到任何服务器
 
@@ -41,11 +41,11 @@ npm run preview    # 本地预览构建产物
 
 | 形态 | wasm 推理引擎 | 姿态模型 |
 |---|---|---|
-| 打包副本 / 安卓 App（推荐） | `public/wasm/` 本地加载 | `public/models/pose_landmarker_full.task` 本地加载，完全离线 |
-| GitHub Pages 网页版 | 本地加载（构建时自动生成） | 本地加载（构建时自动下载模型并生成 base64 副本） |
-| 兜底 | jsdelivr CDN | 官方 Google CDN（GPU 失败自动降级 CPU） |
+| 打包副本 / 安卓 App（推荐） | `public/wasm/` 本地加载 | **base64 内联进 JS**（构建时由 `src/assets/model-b64.txt` 打包），完全不读文件，完全离线 |
+| GitHub Pages 网页版 | 本地加载（构建时自动生成） | 内联加载（构建时自动下载模型并生成 base64） |
+| 兜底 | jsdelivr CDN | 本地二进制 → 本地 base64 文件 → 官方 Google CDN（GPU 失败自动降级 CPU） |
 
-> 提示：模型体积约 9.4MB。本地资源统一使用 XHR 读取（兼容安卓 App 的 file:// 环境，`fetch` 不支持 file:// scheme）。构建部署时模型会一并打包，网页版与 App 均无需访问 Google 存储。
+> 提示：模型体积约 9.4MB。**内联方案**：构建时把模型的 base64 文本（约 12.5MB）直接编译进 JS（`src/assets/model-b64.txt` + Vite `?raw` 导入），运行时在内存中解码，**完全不依赖任何文件读取或网络**，因此安卓 WebView 的 `file://` 环境（`fetch`/部分 `XHR` 受限）也能 100% 加载成功。该内联文件由 `npm install`（postinstall 脚本）或 GitHub Actions 自动生成；从 GitHub 克隆源码后如需本地构建，请先运行 `npm install` 并保证 `src/assets/model-b64.txt` 存在（或直接使用打包副本/APK）。
 
 ## 摄像头授权说明
 
@@ -83,10 +83,11 @@ APK 内嵌全部网页资源与 AI 模型，安装后 **无需联网** 即可完
 ```
 ├── public/
 │   ├── wasm/                 # MediaPipe 推理引擎（本地优先加载，仅打包副本/APK 内置）
-│   └── models/               # 姿态模型：pose_landmarker_full.task（二进制）与 .task.b64（网页版内置）
+│   └── models/               # 姿态模型：pose_landmarker_full.task（二进制）与 .task.b64（base64 副本）
 ├── src/
+│   ├── assets/model-b64.txt  # 模型 base64（构建时内联进 JS，零文件读取；postinstall/Actions 自动生成）
 │   ├── hooks/usePoseDetection.ts   # 摄像头授权 + 姿态检测主逻辑
-│   └── lib/mediapipe-pose.ts       # MediaPipe 加载（本地→base64→CDN 多级兜底）
+│   └── lib/mediapipe-pose.ts       # MediaPipe 加载（内联→本地→base64→CDN 多级兜底）
 ├── android/                  # 安卓 WebView 壳工程（产出 APK）
 └── scripts/copy-mediapipe-assets.mjs
 ```

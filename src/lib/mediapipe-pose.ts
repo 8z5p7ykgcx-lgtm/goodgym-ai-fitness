@@ -1,9 +1,11 @@
 // MediaPipe Pose Landmarker 加载与推理封装
 // 加载链：
 //   wasm : 本地（file:// 或 http(s)）→ jsdelivr CDN
-//   模型 : 本地二进制 → 本地 base64（运行时解码）→ 官方 CDN
-// 关键兼容点：本地资源统一用 XHR 读取 —— window.fetch 规范上不支持 file:// scheme，
-// 在安卓 WebView（file:///android_asset）里必然失败，XHR + WebView file 访问 flags 才能读到本地模型。
+//   模型 : 内联 base64（构建时打包进 JS，零文件读取/零网络）→ 本地二进制 → 本地 base64 文件 → 官方 CDN
+// 关键兼容点1：模型 base64 内联进应用（?raw 构建时打包），安卓 WebView 的 file:// 环境
+//   下完全不依赖任何文件读取，100% 可靠。
+// 关键兼容点2：本地资源统一用 XHR 读取 —— window.fetch 规范上不支持 file:// scheme，
+//   XHR + WebView file 访问 flags 才能读到本地文件。
 import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision';
 import type { Keypoint } from './pose-utils';
 
@@ -30,6 +32,20 @@ function errBrief(err: unknown): string {
     return m.length > 60 ? `${m.slice(0, 60)}…` : m;
   }
   return String(err);
+}
+
+/**
+ * 加载构建时内联进 JS 的 base64 模型（src/assets/model-b64.txt，?raw 打包）。
+ * 该文件由构建/安装流程生成（本地仓库自带；GitHub Actions 构建时自动生成）。
+ */
+async function loadInlineB64(): Promise<string | null> {
+  try {
+    const mod = (await import('../assets/model-b64.txt?raw')) as { default?: unknown };
+    return typeof mod.default === 'string' ? mod.default : null;
+  } catch (e) {
+    console.warn('[MediaPipe] 内联 base64 模型不可用（构建产物未包含）:', e);
+    return null;
+  }
 }
 
 /** XHR 读取本地/远端资源：兼容 file://（WebView）与 http(s)（网页部署） */
@@ -78,13 +94,18 @@ async function tryCreateLandmarker(fileset: any, model: ModelSource): Promise<an
   throw lastErr;
 }
 
-/** 读取 base64 模型文本并解码为二进制 */
-async function fetchModelFromB64(url: string): Promise<Uint8Array> {
-  const text = (await readResource(url, 'text')) as string;
+/** 解码 base64 文本为二进制 */
+function decodeB64(text: string): Uint8Array {
   const bin = atob(text.replace(/\s+/g, ''));
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return bytes;
+}
+
+/** 读取 base64 模型文本并解码为二进制 */
+async function fetchModelFromB64(url: string): Promise<Uint8Array> {
+  const text = (await readResource(url, 'text')) as string;
+  return decodeB64(text);
 }
 
 export function loadPoseLandmarker(): Promise<any> {
@@ -106,7 +127,18 @@ export function loadPoseLandmarker(): Promise<any> {
       }
     }
 
-    // 2) 模型：本地二进制 → 本地 base64 → 官方 CDN；每级含 GPU/CPU 降级
+    // 2) 模型：内联 base64（构建打包，最可靠）→ 本地二进制 → 本地 base64 文件 → 官方 CDN；每级含 GPU/CPU 降级
+    try {
+      const inline = await loadInlineB64();
+      if (inline) {
+        poseLandmarker = await tryCreateLandmarker(fileset, { buffer: decodeB64(inline) });
+        return poseLandmarker;
+      }
+      throw new Error('未包含内联模型');
+    } catch (e0) {
+      console.warn('[MediaPipe] 内联模型不可用，尝试本地文件:', e0);
+      stageErrors.push(`内联模型不可用（${errBrief(e0)}）`);
+    }
     try {
       poseLandmarker = await tryCreateLandmarker(fileset, {
         path: MODEL_LOCAL,
@@ -114,15 +146,15 @@ export function loadPoseLandmarker(): Promise<any> {
       return poseLandmarker;
     } catch (e1) {
       console.warn('[MediaPipe] 本地模型二进制不可用:', e1);
-      stageErrors.push(`内置模型文件不可用（${errBrief(e1)}）`);
+      stageErrors.push(`本地模型文件不可用（${errBrief(e1)}）`);
     }
     try {
       const buffer = await fetchModelFromB64(MODEL_B64);
       poseLandmarker = await tryCreateLandmarker(fileset, { buffer });
       return poseLandmarker;
     } catch (e2) {
-      console.warn('[MediaPipe] 本地 base64 模型不可用:', e2);
-      stageErrors.push(`内置 base64 模型不可用（${errBrief(e2)}）`);
+      console.warn('[MediaPipe] 本地 base64 模型文件不可用:', e2);
+      stageErrors.push(`本地 base64 模型不可用（${errBrief(e2)}）`);
     }
     try {
       poseLandmarker = await tryCreateLandmarker(fileset, { path: MODEL_CDN });
