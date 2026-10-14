@@ -4,11 +4,79 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#171717" />
-    <link rel="manifest" href="/manifest.json" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23171717'/><text x='50' y='65' font-size='50' text-anchor='middle' fill='white'>💪</text></svg>" />
     <title>AI 健身助手</title>
+    <style>
+      /* 启动加载页：防止 JS 加载期间白屏 */
+      html, body { margin: 0; padding: 0; background: #fafafa; }
+      #boot-splash {
+        position: fixed; inset: 0; z-index: 9999;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        background: #fafafa; color: #404040;
+        font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+        transition: opacity 0.4s ease;
+      }
+      #boot-splash .logo { font-size: 56px; margin-bottom: 16px; }
+      #boot-splash .title { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
+      #boot-splash .sub { font-size: 13px; color: #8a8a8a; }
+      #boot-splash .bar {
+        width: 160px; height: 4px; margin-top: 20px; border-radius: 2px;
+        background: #e5e5e5; overflow: hidden;
+      }
+      #boot-splash .bar i {
+        display: block; width: 40%; height: 100%; border-radius: 2px;
+        background: #171717; animation: bootload 1.1s ease-in-out infinite;
+      }
+      @keyframes bootload { 0% { transform: translateX(-100%); } 100% { transform: translateX(320%); } }
+      /* 致命错误兜底页（JS 崩溃时显示，避免白屏） */
+      #fatal-error {
+        display: none; position: fixed; inset: 0; z-index: 10000;
+        flex-direction: column; align-items: center; justify-content: center;
+        background: #fff; color: #262626; text-align: center; padding: 24px;
+        font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+      #fatal-error .icon { font-size: 48px; margin-bottom: 12px; }
+      #fatal-error h2 { font-size: 17px; margin: 0 0 8px; }
+      #fatal-error p { font-size: 13px; color: #737373; margin: 0 0 16px; line-height: 1.7; }
+      #fatal-error button {
+        padding: 10px 28px; border: none; border-radius: 10px;
+        background: #171717; color: #fff; font-size: 14px; cursor: pointer;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <div id="boot-splash">
+      <div class="logo">💪</div>
+      <div class="title">AI 健身助手</div>
+      <div class="sub">正在加载，请稍候…</div>
+      <div class="bar"><i></i></div>
+    </div>
+    <div id="fatal-error">
+      <div class="icon">⚠️</div>
+      <h2>页面加载出错了</h2>
+      <p>应用遇到异常未能启动。请尝试刷新页面；<br />若问题依旧，请检查网络连接后重试。</p>
+      <button onclick="location.reload()">重新加载</button>
+    </div>
     <script type="module" src="/src/index.tsx"></script>
+    <script>
+      // 全局兜底：任何未捕获错误都不允许出现纯白屏
+      window.addEventListener('error', function (e) {
+        if (e && e.message && /ResizeObserver/.test(e.message)) return;
+        var splash = document.getElementById('boot-splash');
+        var fatal = document.getElementById('fatal-error');
+        if (splash) splash.style.display = 'none';
+        if (fatal) fatal.style.display = 'flex';
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        console.error('未处理的 Promise 异常:', e && e.reason);
+      });
+    </script>
+    <noscript>
+      <div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#fff;color:#262626;font-family:sans-serif;text-align:center;padding:24px;">
+        <p>本应用需要启用 JavaScript 才能运行，请在浏览器设置中开启后刷新页面。</p>
+      </div>
+    </noscript>
   </body>
 </html>
