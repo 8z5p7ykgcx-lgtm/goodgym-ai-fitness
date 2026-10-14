@@ -16,7 +16,7 @@ export default function WorkoutPage() {
   const {
     state, isDetecting, currentExercise,
     startDetection, stopDetection, selectExercise,
-    cameraEnabled, enableCamera, videoRef,
+    cameraEnabled, cameraStatus, enableCamera, videoRef,
     modelLoading, modelReady, loadModel,
   } = usePoseDetection();
 
@@ -58,11 +58,24 @@ export default function WorkoutPage() {
     wasDetectingRef.current = isDetecting;
   }, [isDetecting]);
 
+  /**
+   * 开始检测：摄像头授权是使用的前置条件。
+   * 1) 未授权 → 先请求摄像头（触发浏览器/系统授权弹窗）
+   * 2) 授权成功 → 加载姿态模型
+   * 3) 一切就绪 → 启动检测循环（画面与识别同时工作）
+   */
   const handleStart = useCallback(async () => {
     if (!currentExercise) { toast.warning('请先选择运动类型'); return; }
     if (!cameraEnabled) {
       const ok = await enableCamera();
-      if (!ok) { toast.error('无法访问摄像头，请检查浏览器权限'); return; }
+      if (!ok) {
+        if (cameraStatus === 'denied') {
+          toast.error('摄像头权限被拒绝，请在浏览器设置中允许后重试');
+        } else {
+          toast.error('无法访问摄像头，请按画面提示操作');
+        }
+        return;
+      }
     }
     if (!modelReady) {
       toast.info('正在加载姿态检测模型，请稍候...');
@@ -72,7 +85,7 @@ export default function WorkoutPage() {
     }
     startDetection();
     toast.success('检测已开始，请站到镜头前');
-  }, [currentExercise, cameraEnabled, enableCamera, modelReady, loadModel, startDetection]);
+  }, [currentExercise, cameraEnabled, cameraStatus, enableCamera, modelReady, loadModel, startDetection]);
 
   const handleStop = useCallback(() => {
     if (currentExercise && state.reps + state.sets > 0) {
@@ -113,8 +126,10 @@ export default function WorkoutPage() {
             <VideoDetectionSection
               videoRef={videoRef} keypoints={state.keypoints} angles={state.angles}
               errors={state.errors} isDetecting={isDetecting} cameraEnabled={cameraEnabled}
-              exerciseName={currentExercise?.name || ''} isGoodForm={state.isGoodForm}
-              repProgress={state.repProgress} hasPerson={state.hasPerson} modelLoading={modelLoading}
+              cameraStatus={cameraStatus} exerciseName={currentExercise?.name || ''}
+              isGoodForm={state.isGoodForm} repProgress={state.repProgress}
+              hasPerson={state.hasPerson} modelLoading={modelLoading}
+              onEnableCamera={enableCamera}
             />
             <div className="lg:hidden">
               <StatsSection currentReps={state.reps} currentSets={state.sets} targetReps={currentExercise?.targetReps || 0} sessionDuration={sessionDuration} accuracy={goodFrameRatio} refreshVersion={historyVersion} />
@@ -124,7 +139,7 @@ export default function WorkoutPage() {
             <ExerciseSelectorSection exercises={EXERCISES} selectedId={currentExercise?.id || null} onSelect={selectExercise} disabled={isDetecting} />
             <CounterDisplaySection currentReps={state.reps} currentSets={state.sets} targetReps={currentExercise?.targetReps || 0} isDetecting={isDetecting} sessionDuration={sessionDuration} exerciseName={currentExercise?.name || ''} />
             <CorrectionPanelSection errors={state.errors} isDetecting={isDetecting} isGoodForm={state.isGoodForm} goodFrames={goodFramesRef.current} totalFrames={totalFramesRef.current} />
-            <ControlButtonSection isDetecting={isDetecting} onStart={handleStart} onStop={handleStop} hasExercise={!!currentExercise} cameraEnabled={cameraEnabled} onEnableCamera={enableCamera} onReset={handleReset} modelLoading={modelLoading} />
+            <ControlButtonSection isDetecting={isDetecting} onStart={handleStart} onStop={handleStop} hasExercise={!!currentExercise} cameraEnabled={cameraEnabled} cameraStatus={cameraStatus} onEnableCamera={enableCamera} onReset={handleReset} modelLoading={modelLoading} />
             <div className="hidden lg:block">
               <StatsSection currentReps={state.reps} currentSets={state.sets} targetReps={currentExercise?.targetReps || 0} sessionDuration={sessionDuration} accuracy={goodFrameRatio} refreshVersion={historyVersion} />
             </div>

@@ -1,5 +1,6 @@
 import { useRef, useEffect } from 'react';
-import { Shield, CameraOff, AlertTriangle, CheckCircle, UserX, Loader2 } from 'lucide-react';
+import { Shield, CameraOff, AlertTriangle, CheckCircle, UserX, Loader2, Camera, RefreshCw } from 'lucide-react';
+import type { CameraStatus } from '@/hooks/usePoseDetection';
 import {
   drawSkeleton, drawErrorMarker, drawJointAngle,
   type Keypoint, type JointAngles, type DetectedError,
@@ -12,20 +13,58 @@ interface Props {
   errors: DetectedError[];
   isDetecting: boolean;
   cameraEnabled: boolean;
+  cameraStatus: CameraStatus;
   exerciseName: string;
   isGoodForm: boolean;
   repProgress: number;
   hasPerson: boolean;
   modelLoading: boolean;
+  onEnableCamera: () => void;
+}
+
+/** 摄像头授权异常时的引导文案 */
+function cameraStatusGuide(status: CameraStatus): { title: string; desc: string } {
+  switch (status) {
+    case 'denied':
+      return {
+        title: '摄像头权限被拒绝',
+        desc: '请在浏览器地址栏左侧的摄像头图标处，将权限改为「允许」，然后点击下方按钮重新授权。',
+      };
+    case 'no-device':
+      return {
+        title: '未检测到摄像头',
+        desc: '请确认设备已连接摄像头，或检查是否被系统禁用后重试。',
+      };
+    case 'in-use':
+      return {
+        title: '摄像头被占用',
+        desc: '摄像头可能正被其他应用使用，请关闭占用摄像头的应用后重试。',
+      };
+    case 'unsupported':
+      return {
+        title: '当前环境不支持摄像头',
+        desc: '摄像头需要 HTTPS 或 localhost 环境，请使用 HTTPS 打开本应用（安卓 App 内可直接使用）。',
+      };
+    case 'error':
+      return {
+        title: '摄像头开启失败',
+        desc: '发生未知错误，请点击下方按钮重试。',
+      };
+    default:
+      return { title: '需要摄像头授权', desc: '动作识别需要调用摄像头，请点击下方按钮授权使用。' };
+  }
 }
 
 export default function VideoDetectionSection({
   videoRef, keypoints, angles, errors,
-  isDetecting, cameraEnabled, exerciseName,
-  isGoodForm, repProgress, hasPerson, modelLoading,
+  isDetecting, cameraEnabled, cameraStatus, exerciseName,
+  isGoodForm, repProgress, hasPerson, modelLoading, onEnableCamera,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const pulseRef = useRef(0);
+  const needCamera = !cameraEnabled;
+  const cameraBlocked = !cameraEnabled && ['denied', 'no-device', 'in-use', 'unsupported', 'error'].includes(cameraStatus);
+  const guide = cameraBlocked ? cameraStatusGuide(cameraStatus) : null;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -63,17 +102,50 @@ export default function VideoDetectionSection({
   return (
     <div className="relative w-full overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
       <div className="relative aspect-[4/3] w-full overflow-hidden bg-neutral-100">
-        {cameraEnabled ? (
-          <video ref={videoRef} className="absolute inset-0 w-full h-full object-cover opacity-60 -scale-x-100" playsInline muted />
-        ) : (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-neutral-400">
-            <CameraOff className="w-14 h-14 opacity-40" />
-            <p className="text-sm">未启用摄像头</p>
-            <p className="text-xs">点击「开始检测」授权访问</p>
+        {/* video 元素始终渲染：保证 ref 恒定存在，摄像头流可稳定挂载 */}
+        <video
+          ref={videoRef}
+          className={`absolute inset-0 w-full h-full object-cover -scale-x-100 transition-opacity duration-300 ${cameraEnabled ? 'opacity-60' : 'opacity-0'}`}
+          autoPlay playsInline muted
+        />
+        <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none -scale-x-100" />
+
+        {/* 未授权时：提示 + 授权按钮（授权是使用前置条件） */}
+        {needCamera && !cameraBlocked && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-neutral-400 bg-neutral-100/60">
+            <CameraOff className="w-12 h-12 opacity-40" />
+            <p className="text-sm font-medium text-neutral-500">动作识别需要摄像头授权</p>
+            <p className="text-xs">点击下方按钮，在浏览器弹窗中选择「允许」</p>
+            <button
+              onClick={onEnableCamera}
+              disabled={cameraStatus === 'requesting'}
+              className="mt-1 flex items-center gap-2 px-5 py-2.5 rounded-xl bg-neutral-900 text-white text-sm font-medium hover:bg-neutral-700 disabled:opacity-60"
+            >
+              {cameraStatus === 'requesting' ? (
+                <><Loader2 className="w-4 h-4 animate-spin" />正在请求授权…</>
+              ) : (
+                <><Camera className="w-4 h-4" />授权摄像头</>
+              )}
+            </button>
           </div>
         )}
-        <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none -scale-x-100" />
-        {!isDetecting && !modelLoading && (
+
+        {/* 授权被拒/无设备/不支持：展示具体原因与操作指引 */}
+        {cameraBlocked && guide && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center bg-neutral-100/60">
+            <AlertTriangle className="w-12 h-12 text-amber-500" />
+            <p className="text-sm font-semibold text-neutral-800">{guide.title}</p>
+            <p className="text-xs text-neutral-500 leading-relaxed max-w-sm">{guide.desc}</p>
+            <button
+              onClick={onEnableCamera}
+              className="mt-1 flex items-center gap-2 px-5 py-2.5 rounded-xl bg-neutral-900 text-white text-sm font-medium hover:bg-neutral-700"
+            >
+              <RefreshCw className="w-4 h-4" />重新授权
+            </button>
+          </div>
+        )}
+
+        {!isDetecting && cameraEnabled && !modelLoading && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="px-4 py-2 rounded-full bg-white/70 backdrop-blur-sm border border-neutral-200">
               <span className="text-sm text-neutral-600">{exerciseName ? `已选择${exerciseName}，点击开始检测` : '请选择运动类型'}</span>
@@ -89,7 +161,7 @@ export default function VideoDetectionSection({
             </div>
           </div>
         )}
-        {isDetecting && !hasPerson && (
+        {isDetecting && cameraEnabled && !hasPerson && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="px-4 py-2 rounded-full bg-white/70 backdrop-blur-sm border border-neutral-200">
               <UserX className="w-4 h-4 inline mr-2 text-neutral-500" />
@@ -97,7 +169,7 @@ export default function VideoDetectionSection({
             </div>
           </div>
         )}
-        {isDetecting && hasPerson && (
+        {isDetecting && cameraEnabled && hasPerson && (
           <div className="absolute top-3 left-3 right-3 flex justify-between items-start pointer-events-none">
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/80 backdrop-blur-sm border border-neutral-200">
               <div className={`w-2 h-2 rounded-full ${isGoodForm ? 'bg-green-500' : 'bg-red-500'} animate-pulse`} />
@@ -116,7 +188,7 @@ export default function VideoDetectionSection({
             )}
           </div>
         )}
-        {isDetecting && hasPerson && (
+        {isDetecting && cameraEnabled && hasPerson && (
           <div className="absolute bottom-3 left-3 right-3 pointer-events-none">
             <div className="h-1 bg-white/50 rounded-full overflow-hidden">
               <div className="h-full bg-neutral-900 transition-all duration-150" style={{ width: `${repProgress * 100}%` }} />
