@@ -1,2 +1,5 @@
 import { Outlet } from 'react-router-dom';
-export const Layout = () => <Outlet />;
+
+export function Layout() {
+  return <Outlet />;
+}

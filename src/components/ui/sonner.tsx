@@ -1,2 +1,16 @@
-import { Toaster as S } from 'sonner';
-export function Toaster(props:React.ComponentProps<typeof S>){return <S className="toaster" toastOptions={{classNames:{toast:'bg-background text-foreground border shadow-lg rounded-md'}}}{...props}/>;}
+import { Toaster as Sonner, type ToasterProps } from 'sonner';
+
+export function Toaster(props: ToasterProps) {
+  return (
+    <Sonner
+      className="toaster group"
+      toastOptions={{
+        classNames: {
+          toast:
+            'group toast group-[.toaster]:bg-white group-[.toaster]:text-neutral-900 group-[.toaster]:border-neutral-200 group-[.toaster]:shadow-lg rounded-md',
+        },
+      }}
+      {...props}
+    />
+  );
+}
