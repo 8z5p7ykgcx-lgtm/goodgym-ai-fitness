@@ -1,6 +1,6 @@
 // MediaPipe Pose Landmarker 加载与推理封装
 // 加载链：
-//   wasm : 本地（file:// 或 http(s)）→ jsdelivr CDN
+//   wasm : 本地（file:// 或 http(s)）→ CDN 镜像列表
 //   模型 : 按协议智能排序，全部统一走 buffer 方式（XHR 读取 → modelAssetBuffer），
 //          彻底规避 file:// 下 MediaPipe 内部 fetch 被 CORS 拦截的问题。
 // 关键兼容点1：模型 base64 内联进应用（?raw 构建时打包），安卓 WebView 的 file:// 环境
@@ -9,13 +9,19 @@
 //   XHR + WebView file 访问 flags 才能读到本地文件。
 // 关键兼容点3：所有模型加载都先读成 ArrayBuffer 再传 modelAssetBuffer，
 //   不再使用 modelAssetPath（其内部 fetch 在 file:// 下必失败）。
+// 关键修复：wasm 源也加入尝试循环 —— FilesetResolver 只是配置路径，
+//   真正加载 wasm 是在 createFromOptions 时，失败后需换 CDN wasm 重试。
 import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision';
 import type { Keypoint } from './pose-utils';
 
 const BASE = import.meta.env.BASE_URL || './';
 
 const WASM_LOCAL = `${BASE}wasm`;
-const WASM_CDN = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+/** wasm CDN 镜像列表（按优先级，国内可访问的优先） */
+const WASM_CDN_SOURCES = [
+  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm',
+  'https://unpkg.com/@mediapipe/tasks-vision@0.10.14/wasm',
+];
 const MODEL_LOCAL = `${BASE}models/pose_landmarker_full.task`;
 const MODEL_B64 = `${BASE}models/pose_landmarker_full.task.b64`;
 
@@ -135,23 +141,16 @@ export function loadPoseLandmarker(): Promise<any> {
   loadPromise = (async () => {
     const stageErrors: string[] = [];
 
-    // 1) wasm：本地优先，CDN 兜底
-    let fileset: any;
-    try {
-      fileset = await FilesetResolver.forVisionTasks(WASM_LOCAL);
-    } catch (e) {
-      console.warn('[MediaPipe] 本地 wasm 加载失败，回退 CDN:', e);
-      try {
-        fileset = await FilesetResolver.forVisionTasks(WASM_CDN);
-      } catch (e2) {
-        throw new Error('推理引擎（wasm）加载失败：本地与 CDN 均不可用');
-      }
-    }
+    // wasm 源列表：本地优先，CDN 兜底
+    const wasmSources = [
+      { label: '本地wasm', path: WASM_LOCAL },
+      ...WASM_CDN_SOURCES.map((url) => ({ label: 'CDN-wasm', path: url })),
+    ];
 
-    // 2) 模型加载：全部走 buffer 方式，按协议智能排序
-    //    file:// (安卓 WebView)：内联base64 → 本地base64文件 → 本地二进制 → CDN
-    //    http/https (网页)：本地二进制 → 内联base64 → 本地base64文件 → CDN
-    const attempts: { label: string; load: () => Promise<Uint8Array> }[] = isFileProtocol
+    // 模型加载源：全部走 buffer 方式，按协议智能排序
+    // file:// (安卓 WebView)：内联base64 → 本地base64文件 → 本地二进制 → CDN
+    // http/https (网页)：本地二进制 → 内联base64 → 本地base64文件 → CDN
+    const modelAttempts: { label: string; load: () => Promise<Uint8Array> }[] = isFileProtocol
       ? [
           { label: '内联模型', load: async () => {
             const inline = await loadInlineB64();
@@ -179,15 +178,27 @@ export function loadPoseLandmarker(): Promise<any> {
           })),
         ];
 
-    for (const attempt of attempts) {
+    // 双层循环：外层遍历 wasm 源，内层遍历模型源
+    // 关键修复：FilesetResolver 只是配置路径，真正加载 wasm 是在 createFromOptions 时
+    // 所以如果本地 wasm 创建 landmarker 失败，需要换 CDN wasm 重新尝试
+    for (const wasmSrc of wasmSources) {
       try {
-        const buffer = await attempt.load();
-        poseLandmarker = await tryCreateLandmarker(fileset, buffer);
-        console.log(`[MediaPipe] 模型加载成功（来源：${attempt.label}）`);
-        return poseLandmarker;
+        const fileset = await FilesetResolver.forVisionTasks(wasmSrc.path);
+
+        for (const modelAttempt of modelAttempts) {
+          try {
+            const buffer = await modelAttempt.load();
+            poseLandmarker = await tryCreateLandmarker(fileset, buffer);
+            console.log(`[MediaPipe] 加载成功（wasm: ${wasmSrc.label}, 模型: ${modelAttempt.label}）`);
+            return poseLandmarker;
+          } catch (e) {
+            console.warn(`[MediaPipe] wasm=${wasmSrc.label}, ${modelAttempt.label} 失败:`, e);
+            stageErrors.push(`${wasmSrc.label}+${modelAttempt.label}（${errBrief(e)}）`);
+          }
+        }
       } catch (e) {
-        console.warn(`[MediaPipe] ${attempt.label} 加载失败:`, e);
-        stageErrors.push(`${attempt.label}不可用（${errBrief(e)}）`);
+        console.warn(`[MediaPipe] wasm 源 ${wasmSrc.label} 初始化失败:`, e);
+        stageErrors.push(`${wasmSrc.label}初始化失败（${errBrief(e)}）`);
       }
     }
 
