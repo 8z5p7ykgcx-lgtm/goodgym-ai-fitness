@@ -24,6 +24,17 @@ export interface PoseState {
   hasPerson: boolean;
 }
 
+/** 摄像头授权状态 */
+export type CameraStatus =
+  | 'unknown'      // 尚未请求授权
+  | 'requesting'   // 正在请求授权
+  | 'granted'      // 已授权
+  | 'denied'       // 被用户拒绝 / 浏览器禁止
+  | 'no-device'    // 未检测到摄像头设备
+  | 'in-use'       // 摄像头被其他程序占用
+  | 'unsupported'  // 当前环境不支持摄像头（非 HTTPS 等）
+  | 'error';       // 其他错误
+
 const INITIAL_ANGLES: JointAngles = {
   leftShoulder: 180, rightShoulder: 180,
   leftElbow: 180, rightElbow: 180,
@@ -37,14 +48,24 @@ const EMPTY_KEYPOINTS: Keypoint[] = Array.from({ length: 33 }, () => ({
   x: 0, y: 0, z: 0, visibility: 0,
 }));
 
+function classifyCameraError(err: unknown): CameraStatus {
+  const name = (err as { name?: string })?.name || '';
+  if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || name === 'SecurityError') return 'denied';
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') return 'no-device';
+  if (name === 'NotReadableError' || name === 'TrackStartError' || name === 'OverconstrainedError') return 'in-use';
+  return 'error';
+}
+
 export function usePoseDetection() {
   const [isDetecting, setIsDetecting] = useState(false);
   const [currentExercise, setCurrentExercise] = useState<Exercise | null>(null);
   const [cameraEnabled, setCameraEnabled] = useState(false);
+  const [cameraStatus, setCameraStatus] = useState<CameraStatus>('unknown');
   const [modelLoading, setModelLoading] = useState(false);
   const [modelReady, setModelReady] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
   const startTimeRef = useRef<number>(0);
   const landmarkerRef = useRef<any>(null);
@@ -81,23 +102,93 @@ export function usePoseDetection() {
     }
   }, [modelReady, modelLoading]);
 
+  /**
+   * 请求摄像头授权并打开摄像头流。
+   * 流的挂载交给 useEffect（等 <video> 元素渲染完成后再 attach），
+   * 彻底修复「流拿到但 videoRef 为空导致画面一直空白、检测不运行」的问题。
+   */
   const enableCamera = useCallback(async (): Promise<boolean> => {
+    if (streamRef.current) {
+      setCameraStatus('granted');
+      setCameraEnabled(true);
+      return true;
+    }
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setCameraStatus('unsupported');
+      setCameraEnabled(false);
+      return false;
+    }
+    setCameraStatus('requesting');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: 'user' },
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: 'user',
+        },
         audio: false,
       });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
+      streamRef.current = stream;
+      // 监听设备拔出/流结束
+      stream.getVideoTracks().forEach((track) => {
+        track.addEventListener('ended', () => {
+          streamRef.current = null;
+          setCameraEnabled(false);
+          setCameraStatus('in-use');
+        });
+      });
+      setCameraStatus('granted');
       setCameraEnabled(true);
       return true;
     } catch (e) {
       console.error('摄像头授权失败:', e);
+      const status = classifyCameraError(e);
+      setCameraStatus(status);
       setCameraEnabled(false);
       return false;
     }
+  }, []);
+
+  // 摄像头授权后，把视频流挂到始终存在的 <video> 元素上并播放
+  useEffect(() => {
+    if (!cameraEnabled || !videoRef.current || !streamRef.current) return;
+    const video = videoRef.current;
+    if (video.srcObject !== streamRef.current) {
+      video.srcObject = streamRef.current;
+    }
+    const playPromise = video.play();
+    if (playPromise && typeof playPromise.catch === 'function') {
+      playPromise.catch(() => {
+        // muted + playsInline 下一般不会触发自动播放拦截，忽略即可
+      });
+    }
+  }, [cameraEnabled]);
+
+  // 启动时（尽力而为）预检摄像头权限状态，用于界面提前展示授权情况
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        if (navigator.permissions?.query) {
+          const res = await navigator.permissions.query({ name: 'camera' as PermissionName });
+          if (cancelled) return;
+          if (res.state === 'granted') setCameraStatus('granted');
+          else if (res.state === 'denied') setCameraStatus('denied');
+        }
+      } catch {
+        // 部分浏览器不支持 permissions API，保持 unknown
+      }
+    };
+    check();
+    return () => { cancelled = true; };
+  }, []);
+
+  // 组件卸载时释放摄像头
+  useEffect(() => {
+    return () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    };
   }, []);
 
   const runCorrections = useCallback(
@@ -379,7 +470,7 @@ export function usePoseDetection() {
   return {
     state: stateRef.current, isDetecting, currentExercise,
     startDetection, stopDetection, selectExercise,
-    cameraEnabled, enableCamera, videoRef,
+    cameraEnabled, cameraStatus, enableCamera, videoRef,
     modelLoading, modelReady, loadModel,
   };
 }
