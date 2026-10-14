@@ -17,7 +17,7 @@ export default function WorkoutPage() {
     state, isDetecting, currentExercise,
     startDetection, stopDetection, selectExercise,
     cameraEnabled, cameraStatus, enableCamera, videoRef,
-    modelLoading, modelReady, loadModel,
+    modelLoading, modelReady, modelError, loadModel,
   } = usePoseDetection();
 
   const [sessionDuration, setSessionDuration] = useState(0);
@@ -80,12 +80,15 @@ export default function WorkoutPage() {
     if (!modelReady) {
       toast.info('正在加载姿态检测模型，请稍候...');
       const ok = await loadModel();
-      if (!ok) { toast.error('模型加载失败，请检查网络连接'); return; }
+      if (!ok) {
+        toast.error(modelError || '模型加载失败，请稍后重试');
+        return;
+      }
       toast.success('模型加载完成');
     }
     startDetection();
     toast.success('检测已开始，请站到镜头前');
-  }, [currentExercise, cameraEnabled, cameraStatus, enableCamera, modelReady, loadModel, startDetection]);
+  }, [currentExercise, cameraEnabled, cameraStatus, enableCamera, modelReady, loadModel, modelError, startDetection]);
 
   const handleStop = useCallback(() => {
     if (currentExercise && state.reps + state.sets > 0) {
