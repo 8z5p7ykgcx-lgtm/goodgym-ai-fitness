@@ -11,7 +11,7 @@
 - **骨骼可视化**：在视频上叠加绘制骨骼连线、关节角度和错误警告标记
 - **训练统计**：记录训练次数、组数、时长和动作标准率，历史记录保存在本地
 - **离线可用**：模型与推理引擎（wasm）随应用打包，支持本地优先加载，无网环境也能运行
-- **国内可用**：模型以 base64 形式内置在仓库，网页版无需访问 Google 存储即可加载；wasm 自动回退 jsdelivr CDN
+- **加载兜底**：模型加载支持「本地 → 仓库内置 base64 → 官方 CDN」多级回退，GPU 不可用时自动降级 CPU；wasm 本地优先、回退 jsdelivr CDN
 - **防白屏**：启动加载页 + 全局错误边界 + 致命错误兜底页，异常时始终有可见反馈
 - **隐私保护**：所有检测在设备本地完成，视频画面不会上传到任何服务器
 
@@ -42,8 +42,10 @@ npm run preview    # 本地预览构建产物
 | 形态 | wasm 推理引擎 | 姿态模型 |
 |---|---|---|
 | 打包副本 / 安卓 App（推荐） | `public/wasm/` 本地加载 | `public/models/pose_landmarker_full.task` 本地加载，完全离线 |
-| GitHub 网页版 | 本地缺失时自动回退 jsdelivr CDN | 仓库内置 `pose_landmarker_full.task.b64`，运行时解码，无需访问 Google |
-| 兜底 | — | 官方 Google CDN（GPU 失败自动降级 CPU） |
+| GitHub 网页版 | 自动回退 jsdelivr CDN | 回退官方 Google CDN（GPU 失败自动降级 CPU） |
+| 兜底 | — | 官方 Google CDN |
+
+> 提示：模型体积约 9.4MB。国内直接访问 Google CDN 可能不稳定，建议国内用户使用打包副本或安卓 App（模型已内置，完全离线）。
 
 ## 摄像头授权说明
 
