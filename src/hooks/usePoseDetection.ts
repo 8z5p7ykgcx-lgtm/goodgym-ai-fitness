@@ -63,6 +63,7 @@ export function usePoseDetection() {
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>('unknown');
   const [modelLoading, setModelLoading] = useState(false);
   const [modelReady, setModelReady] = useState(false);
+  const [modelError, setModelError] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -89,6 +90,7 @@ export function usePoseDetection() {
     if (modelReady && landmarkerRef.current) return true;
     if (modelLoading) return false;
     setModelLoading(true);
+    setModelError(null);
     try {
       const lm = await loadPoseLandmarker();
       landmarkerRef.current = lm;
@@ -96,6 +98,7 @@ export function usePoseDetection() {
       return true;
     } catch (e) {
       console.error('模型加载失败:', e);
+      setModelError(e instanceof Error ? e.message : '未知错误');
       return false;
     } finally {
       setModelLoading(false);
@@ -471,6 +474,6 @@ export function usePoseDetection() {
     state: stateRef.current, isDetecting, currentExercise,
     startDetection, stopDetection, selectExercise,
     cameraEnabled, cameraStatus, enableCamera, videoRef,
-    modelLoading, modelReady, loadModel,
+    modelLoading, modelReady, modelError, loadModel,
   };
 }
