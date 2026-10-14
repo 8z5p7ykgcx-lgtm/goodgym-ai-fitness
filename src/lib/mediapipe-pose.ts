@@ -36,12 +36,20 @@ function errBrief(err: unknown): string {
 
 /**
  * 加载构建时内联进 JS 的 base64 模型（src/assets/model-b64.txt，?raw 打包）。
- * 该文件由构建/安装流程生成（本地仓库自带；GitHub Actions 构建时自动生成）。
+ * 使用 import.meta.glob：文件存在则内联，不存在则返回 null（构建永不因缺模型失败），
+ * 由构建/安装流程生成（本地仓库自带；GitHub Actions 构建时自动生成）。
  */
+const inlineLoaders = import.meta.glob('../assets/*.txt', {
+  query: '?raw',
+  import: 'default',
+});
+
 async function loadInlineB64(): Promise<string | null> {
   try {
-    const mod = (await import('../assets/model-b64.txt?raw')) as { default?: unknown };
-    return typeof mod.default === 'string' ? mod.default : null;
+    const loader = inlineLoaders['../assets/model-b64.txt'];
+    if (!loader) return null;
+    const s = (await loader()) as unknown;
+    return typeof s === 'string' ? s : null;
   } catch (e) {
     console.warn('[MediaPipe] 内联 base64 模型不可用（构建产物未包含）:', e);
     return null;
