@@ -4,3 +4,15 @@ dist
 .DS_Store
 *.log
 *.tsbuildinfo
+
+# 构建产物（由 postinstall / build-apk.sh 自动生成）
+public/models/
+public/wasm/
+src/assets/
+
+# Android 构建中间产物与签名
+android/_build/
+android/app-release.apk
+android/app-release.apk.idsig
+android/debug.keystore
+android/res/mipmap-*/ic_launcher.png
